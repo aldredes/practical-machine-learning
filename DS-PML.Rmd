@@ -1,0 +1,454 @@
+---
+title: "Use of Practical Machine Learning to Classify Ways of Doing Unilateral Dumbbell Biceps Curl"
+author: "Aldrin R. Desoloc"
+date: "Apr. 9, 2017"
+output: 
+    html_document:
+        theme: readable
+        highlight: monochrome
+        self_contained: false
+        code_folding: show
+---
+
+## Overview
+
+By using fitness trackers, it is now possible to collect a large amount of data about personal activity relatively inexpensively. One thing that people regularly do is quantify how much of a particular activity they do using these wearable devices, but they rarely quantify how well they do it. Due to this, a human activity recognition research was conducted to create the _Weight Lifting Exercises_ dataset from accelerometers on the belt, forearm, arm, and dumbell of 6 young male participants with little weight lifting experience (_see the paper by Velloso et al in the references below_). They were asked to perform one set of 10 repetitions of the unilateral dumbbell biceps curl in 5 different ways:
+
+* _Class A_: Exactly according to the specification
+* _Class B_: Throwing the elbows to the front
+* _Class C_: Lifting the dumbbell only halfway
+* _Class D_: Lowering the dumbbell only halfway; and 
+* _Class E_: Throwing the hips to the front. 
+
+_Class A_ corresponds to the specified execution of the exercise, while the other 4 classes correspond to common mistakes.
+
+In this report, the _Weight Lifting Exercise_ dataset will be used to model a classifier to predict how the dumbbell lifts was done based on the classes specfied above. The approach is to train different models using some of the best performing machine learning algorithms using `R`'s `caret` package with 10-fold cross-validation using the training dataset, and then compare them with predication accuracy over the validation dataset.  Training time is enhanced with using data table instead of data frame when cleaning and processing the data, also with compiled functions so that they can be interpreted by a very fast byte code interpreter, and with parallel processing through `caret`.  In the end, the chosen model is applied to predict the 20 test cases available in the test data (target classes are unknown) from the final project of  [Coursera Practical Machine Learning course](https://www.coursera.org/learn/practical-machine-learning/home/info). 
+
+
+## Data Cleaning and Preprocessing
+
+```{r initialization_and_load_data, echo = FALSE, warning = FALSE}
+# Refresh variables in working environment
+rm(list = ls())
+
+# Get the start time for the report
+start <- Sys.time()
+
+# load the required packages
+library(data.table)
+library(compiler)  # for compiled functions
+library(ggplot2)
+library(plyr)
+library(parallel)
+library(foreach)
+library(grid) # for multipleplot
+library(scales) # for scale plotting
+library(hms) # for time formatting as %H:%M:%S.01
+# load the package without printing any messages
+suppressPackageStartupMessages(library(caret))
+suppressPackageStartupMessages(library(doMC))
+suppressPackageStartupMessages(library(pROC))
+suppressPackageStartupMessages(library(ROCR))
+suppressPackageStartupMessages(library(gridExtra))
+# load the packages for the classification algorithms used
+suppressPackageStartupMessages(library(e1071)) 
+suppressPackageStartupMessages(library(randomForest)) # for parRF
+suppressPackageStartupMessages(library(gbm)) # for gbm
+suppressPackageStartupMessages(library(kernlab)) # for svmPoly
+suppressPackageStartupMessages(library(C50)) # for C5.0
+
+# A compiled function to print num with 6 digits
+f_fn <- function(num, digits = 6) {
+    return(format(round(num, digits = digits), nsmall = digits, big.mark = ","))
+}
+formatNum <- cmpfun(f_fn)
+
+# Use parallel computing in training the classifier
+registerDoMC(detectCores())
+#registerDoMC(detectCores() - 1) # convention to leave 1 core for OS
+#cores <- getDoParWorkers()
+#print(paste(cores, ' core', ifelse(cores >= 2, 's', ''), 
+#              ' will be used in training the models in parallel.', sep = ''))
+
+# Load training and testing datasets locally as data.table
+rawTraining <- fread("pml-training.csv", na.strings = c("NA","#DIV/0!","")
+                        , stringsAsFactors = FALSE, header = TRUE)
+rawTesting <- fread("pml-testing.csv", na.strings = c("NA","#DIV/0!", "")
+                        , stringsAsFactors = FALSE, header = TRUE)
+
+# Inspect the training and test sets.
+rawTrainingSummary <- summary(rawTraining)
+```
+
+The original training dataset (_loaded from file `pml-training.csv`_) has `r formatNum(nrow(rawTraining), 0)` observations and `r formatNum(ncol(rawTraining), 0)` variables, while the original testing dataset (_loaded from file `pml-testing.csv`_) contains `r formatNum(nrow(rawTesting), 0)` observations and `r formatNum(ncol(rawTesting), 0)` variables but has difference of one variable/feature.  The testing dataset has no _classe_ variable as this dataset will be used to predict its _classe_ variable based on the model built by a trained classifier.  _(Refer to Appendix 1 to see the summary of the loaded training dataset.)_
+
+For tidying the datasets, we first remove the columns or variables of the training dataset that are _near-zero variance predictors_ and if all of their values is `NA`.
+
+```{r data_cleaning_remove_zero_covariates, echo = TRUE, warning = FALSE}
+# Remove columns that all values are NA's
+rawTraining <- rawTraining[, .SD, 
+                        .SDcols = (colSums(is.na(rawTraining)) < nrow(rawTraining))]
+
+# Remove zero covariates
+rawTraining <- rawTraining[, .SD, .SDcols = -(nearZeroVar(rawTraining, 
+                        allowParallel = TRUE))]
+```
+
+The _predictor variables_' and _target variables_' class types are then changed to `numeric` and `factor` respectively.
+
+```{r data_cleaning_set_feature_data_types, echo = TRUE, warning = FALSE}
+# Change other variable's class as numeric
+rawTraining <- rawTraining[ , c(8:ncol(rawTraining) - 1) := lapply(.SD, as.numeric)
+                                , .SDcols = c(8:ncol(rawTraining) - 1)]
+rawTesting <- rawTesting[ , c(8:ncol(rawTesting) - 1) := lapply(.SD, as.numeric)
+                                , .SDcols = c(8:ncol(rawTesting) - 1)]
+
+# Set variable classe as factor
+rawTraining <- rawTraining[, 'classe' := lapply(.SD, as.factor), .SDcols = 'classe']
+```
+
+Instead of using `caret`'s `preProcess` function for _imputation_, the predictor variables with missing values are imputed with mean per _user_name_. Below is the cross tabulation of number of observations by the variable `classe` and variable `user_name`:
+
+```{r data_cleaning_imputation, echo = TRUE, warning = FALSE}
+# A compiled function to impute mean by user_name variable
+f_imb <- function (dat, by) {
+    cols <- colnames(dat)[colSums(is.na(dat)) > 0]
+    return (dat[, (cols) := lapply(.SD, function(x) replace(x,
+                                    which(is.na(x)), 
+                                    ifelse(is.na(mean(x, na.rm = TRUE)), 0, 
+                                           mean(x, na.rm = TRUE)))), 
+            by = c(by),
+            .SDcols = cols])  
+}
+imputeMeanBy <- cmpfun(f_imb) 
+    
+rawTraining <- imputeMeanBy(rawTraining, "user_name")
+rawTesting <- imputeMeanBy(rawTesting, "user_name")
+
+# Check how many instances of classe's among users
+table(rawTraining$user_name, rawTraining$classe)
+```
+
+We can verify below that we have removed the `NA`'s from the training dataset, i.e. the total number of non-`NA` values should be the same as the training dataset's _number of columns_ $\times$ _number of rows_, i.e. `r formatNum(ncol(rawTraining) * nrow(rawTraining), 0)`.
+
+```{r data_cleaning_verification1, echo = TRUE, warning = FALSE}
+# Check if there's no NA's anymore; total counts should be equal to nrow x ncol
+table(is.na(rawTraining))    
+```
+
+Below is the _marginal table_ of observations among the target variable `classe` within the training dataset.  As we can see, _class A_ has the highest number of cases from the training dataset.  
+
+```{r data_cleaning_verification2, echo = TRUE, warning = FALSE}
+# Distribution of classe among the training dataset
+prop.table(table(rawTraining$classe))
+```
+
+Furthermore, highly correlated attributes will be removed so that training a model would perform better. We'll use `caret`'s `findCorrelation` function to find the attributes that are highly correlated features. In practice, the attributes with an absolute correlation of 0.75 or higher can be removed but we'll retain more as they could be important in our model, hence we'll set the cutoff at 95%.
+
+```{r data_cleaning_feature_selection, echo = TRUE, warning = FALSE}
+# Predictors to remove
+#names(rawTraining[, c(1:6)])
+rawTraining <- rawTraining[, -c(1:6)]
+
+# Remove further using feature selection 
+correlationMatrix <- cor(subset(rawTraining, select = (names(rawTraining) != 'classe')))
+highlyCorrelated <- findCorrelation(correlationMatrix, cutoff = 0.95)
+
+# Columns to remove further
+#names(rawTraining[, .SD, .SDcols = (highlyCorrelated)])
+
+# Training data with deleted highly correlated features
+rawTraining <- rawTraining[, .SD, .SDcols = -(highlyCorrelated)] 
+
+# Choose only the columns in testing set that exist in the train data
+testing <- subset(rawTesting, select = (names(rawTesting) %in% names(rawTraining))) 
+#names(rawTraining)
+#names(testing)
+```
+
+In order to get out-of-sample errors, the cleaned training set is split with typical `r splitPct <- 0.6; splitPct * 100`% / `r (1 - splitPct) * 100`% into a new training set for prediction and a validation set to compute the out-of-sample errors, respectively.
+
+```{r data_spliting, echo = TRUE, warning = FALSE}
+# Split data with randoom rows and preserved the overall class distribution of the data.
+seed <- 39703
+set.seed(seed)  # For reproducibility
+idx <- createDataPartition(rawTraining$classe, p = 0.6, list = FALSE ) 
+training <- rawTraining[idx, ]
+validation <- rawTraining[-idx, ]
+```
+
+The new training dataset has `r formatNum(nrow(training), 0)` observations and the validation dataset has `r formatNum(nrow(validation), 0)` observations, and both has `r formatNum(ncol(training), 0)` variables, while the cleaned testing dataset contains `r formatNum(nrow(testing), 0)` observations and `r formatNum(ncol(testing), 0)` variables.
+
+
+## Training Different Models
+
+Various classication algorithms will be used to train different models on the training data with _10-fold cross validation_ and without explicitly specifying the tuning parameters, i.e. we let the learner automatically search for the best parameters. The classification algorithms are some of available learning methods from `caret` such as _Stochastic Gradient Boosting_ (`gbm`), _Parallel Random Forest_ (`parRF`), _Support Vector Machines with Polynomial Kernel_ (`svmPoly`), and the _C5.0_.  These samples of machine learning algorithms are based on comparison papers by Delgado et al and by Wainer (_see the references at the bottom of this page_).
+
+Training different models through `caret` has proven to be more convenient because it provides a simple, common interface to almost every machine learning algorithm in `R`. However, it's a bit slower than the counterpart non-`caret` packages, hence parallel processing is utilized to speed up the training time.
+
+```{r model_training, echo = FALSE, warning = FALSE, collapse = TRUE}
+# Training control for k-fold cross validation
+control <- trainControl(method = "cv") # leave with default k = 10
+
+# A compiled function to train a model by a variable with a given algorithm
+f_tmb <- function(by, data, method, control, tuneGrid = NULL
+                                , showSummaryResult = FALSE
+                                , showPlot = FALSE, ...) {
+    set.seed(seed) 
+    formula <- as.formula(eval(parse(text = paste(by, ' ~ .', sep = ''))))                 
+    model.temp <- caret::train(formula, data = data, method = method
+                            , trControl = control
+                            , tuneGrid = tuneGrid, ...
+                          )
+    # summarize results
+    if (showSummaryResult) {
+        print(model.temp, digits = 4)
+        if (showPlot) plot(model.temp)   
+    }
+    return (model.temp)
+}
+trainModelBy <- cmpfun(f_tmb) 
+
+# Train models with different classification algorithms via caret
+dtModels <- data.table()
+lModels <- list()
+lPreds <- list()
+lMethods <- c("gbm", "parRF", "svmPoly", "C5.0") 
+for (method in lMethods) {
+    if (match(method, lMethods) == 1) message(rep("-", 80)) # Print division
+    s <- Sys.time() # get the start training time
+    # Train the model
+    model <- trainModelBy(by = "classe", data = training, method = method
+                            , control = control, showSummaryResult = TRUE 
+                            , preProcess = c("center", "scale")
+                            , verbose = FALSE
+                            )
+    e <- Sys.time() # get the end training time
+    # Show the confidence matrix
+    pred <- predict(model, validation, type = "raw")
+    print(conf <- confusionMatrix(validation$classe, pred))
+    # Compute for the metrics for model comparison
+    auc <- multiclass.roc(validation$classe, as.numeric(pred))$auc
+    accuracy <- conf$overall[1]
+    kappa <- conf$overall[2]
+    # Populate the model table
+    dtModels <- rbindlist(list(dtModels,
+                                     as.list(c(method, formatNum(as.numeric(accuracy)), 
+                                               formatNum(as.numeric(kappa)),
+                                               formatNum(as.numeric(auc)), 
+                                               as.character(as.hms(e - s))))),
+                                use.names = FALSE)    
+    # Save the model and prediction objects for later use
+    eval(parse(text = paste('lModels <- append(lModels
+                          , list(', method, ' =  model))', sep = ''))) 
+    eval(parse(text = paste('lPreds <- append(lPreds
+                          , list(', method, ' =  pred))', sep = ''))) 
+    message(rep("-", 80)) # Print division
+}
+colnames(dtModels) <- c("Method", "Accuracy", "Kappa", "Multi-class AUC", "Time Elapsed")
+dtModels <- as.data.frame(dtModels[order(-Accuracy)])
+```
+
+
+## Model Comparison
+
+Below is the model comparison table highlighting different models, with their corresponding _accuracy_ and _kappa_ values from prediction over the validation data, the multi-class _area under the curve (AUC)_ computed by `multiclass.roc` function of `pROC` package, and the _time to train the classifier_ with 10-fold cross-validation. 
+
+```{r model_comparison_table, echo = FALSE, warning = FALSE}
+print(dtModels)
+```
+
+Based on the table above, the model by _C5.0_ gets the highest accuracy, kappa and the average AUC over the validation dataset. The model trained by _parallel Random Forest_ has similar outcome as _C5.0_'s.  
+
+Next, we'll further explore and compare differences between models by their resampling distributions.  _(This technique is based on Section 5.8.2. Between-Models of the `caret` documentation.)_
+
+```{r model_comparison_resampling, echo = TRUE, warning = FALSE} 
+# Resampling distributions of models.
+set.seed(seed) 
+resamps <- resamples(lModels)
+
+# Get the model with highest accuracy from resamps
+resampsAcc <- as.data.frame(resamps$values[grep("Accuracy", colnames(resamps$values))])
+resampModelNameWithMaxAcc <- sub("~Accuracy", "", names(resampsAcc)
+                                    [which.max(abs(unlist(lapply(resampsAcc, mean))))])
+
+# Get the differences of resampled models
+difValues <- diff(resamps)
+
+# Get the models with minimum mean difference in accuracy 
+diffAcc <- as.data.frame(difValues$difs$Accuracy[, 
+                            grep(resampModelNameWithMaxAcc, colnames(difValues$difs$Accuracy))])
+modelsToCompare <- unlist(strsplit(names(diffAcc)
+                            [which.min(abs(unlist(lapply(diffAcc, mean))))], ".diff."))
+```
+
+As shown in _Appendix 1_, models are ranked from highest to lowest accuracy at the right plot.  At the left, the differences in accuracy within the confidence level of `r difValues$confLevel` are plotted for each of model pairs.  The accuracy of models based on `C5.0` and `parRF` are pretty close and almost has no difference. In _Appendix 2_, we can see below that the model built by `C5.0` beats the `parRF`'s when correctly predicting most of the _classe_ values from the validation dataset.  Moreover, the ROC plots in _Appendix 3_, which are implemented with _one-vs-all_ approach, show that models trained by `C5.0` and `parRF` are both optimal. 
+
+We'll choose the model with the highest accuracy from the comparison table, i.e. `r dtModels[1, 1]` to predict the test cases and save it as file.
+
+```{r save_model_as_file, echo = TRUE, warning = FALSE}
+    # Save the model as .RDS file
+    trainedModelNameWithMaxAcc <- dtModels[1, 1]
+    mod <- eval(parse(text = paste('lModels$', trainedModelNameWithMaxAcc, sep = '')))
+    modelFileName <- paste('model-', trainedModelNameWithMaxAcc, '.rds', sep = '')
+    saveRDS(mod, modelFileName) # Save the model as file
+    message(paste('The trained model for ', trainedModelNameWithMaxAcc, 
+                  ' has been saved as ', modelFileName, '.', sep = ''))
+```
+
+## Prediction on Testing Set
+
+We now use our model built through `r trainedModelNameWithMaxAcc` to predict the target variable _classe_ for the testing dataset.
+
+```{r prediction_on_testing_set, echo = TRUE, warning = FALSE}
+modelFileName <- paste('model-', trainedModelNameWithMaxAcc, '.rds', sep = '')
+message(paste('Loading the final model from ', modelFileName
+                    , ' and then apply it to predict the 20 test cases ...', sep = ''))
+finalModel <- readRDS(modelFileName)
+print(predict(finalModel, testing))
+```
+
+
+## References
+
+1. Brownlee, J. _Feature Selection with the Caret R Package_. (http://machinelearningmastery.com/feature-selection-with-the-caret-r-package/).
+2. Fernandez-Delgado, M.; Cernadas E.; Barro, S; Amorim, D. **Do we Need Hundreds of Classifiers to Solve Real World Classification Problems?**. _Journal of Machine Learning Research 15 (2014)_. p.3133-3181.  (http://jmlr.org/papers/volume15/delgado14a/delgado14a.pdf).
+3. Grigorev, A. _Response to "How to plot ROC curves in multiclass classification?"_.  (http://stats.stackexchange.com/questions/2151/how-to-plot-roc-curves-in-multiclass-classification).
+4. Kuhn, M. _The caret Package_. (https://topepo.github.io/caret/).
+5. Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. **Qualitative Activity Recognition of Weight Lifting Exercises**. _Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart. Germany: ACM SIGCHI, 2013_. (http://groupware.les.inf.puc-rio.br/har).
+6. Wainer, J. _Comparison of 14 different families of classification algorithms on 115 binary datasets_. (https://arxiv.org/pdf/1606.00930.pdf).
+
+
+## Appendix
+
+#### 1. Dot Plots of Model Resamples and Differences 
+
+```{r model_comparison_resample_plot, echo = FALSE, warning = FALSE, fig.width = 10, fig.height = 4}
+# Draw the resampled plots
+trellis.par.set(caretTheme())
+resPlot <- dotplot(resamps, metric = "Accuracy")
+difPlot <- dotplot(difValues)
+grid.arrange(resPlot, difPlot, ncol = 2, widths = c(1, 1.2))
+```
+
+#### 2. Stacked Bar Chart of Prediction Correctness over Validation Dataset Between C5.0 and Parallel Random Forest
+
+```{r model_comparison_correctness_plot, echo = FALSE, warning = FALSE, fig.width = 10, fig.height = 4} 
+# Initialize plot theme
+limits <- aes(ymax = mean + (1.96 * se), ymin = mean - (1.96 * se))
+dodge <- position_dodge(width = 0.9)
+gTheme <- theme_bw() +
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          axis.line = element_line(size = 0.1),
+          text = element_text(family = 'sans'),
+          plot.caption = element_text(hjust = 0.5),
+          plot.title = element_text(hjust = 0.5)
+    )
+
+# Build the comparison of prediction correctness per classe percentage barchart 
+dtPredCorrect <- data.table()
+for (method in modelsToCompare) {
+    pred <- eval(parse(text = paste('lPreds$', method, sep = '')))
+    tmp <- data.table(classe = validation$classe, correct = (pred == validation$classe))
+    tmp$model <- method
+    dtPredCorrect <- rbind(dtPredCorrect, tmp)
+}
+dtPredCorrect <- dtPredCorrect[, .N, by = list(classe, correct, model)]
+
+# Plot for comparison of model prediction correctness per classe
+dtPredCorrect <- dtPredCorrect[, c('model') 
+                               := lapply(.SD, as.factor), .SDcols = c('model')]
+ggplot(dtPredCorrect, aes(x = model, y = N, fill = correct)) + 
+    geom_bar(position = "fill", stat = "identity") + 
+    scale_y_continuous(labels = percent_format()) +
+    coord_trans(y = scales::exp_trans(20)) +
+    scale_fill_manual(values = c("#771C19", "#E2C59F")) +
+    facet_wrap(~classe, nrow = 1) + 
+    gTheme + 
+    theme(axis.text.x = element_text(angle = 40, hjust = 1)) +
+    labs(x = '', y = ''
+            , caption = paste('Model Prediction Correctness per classe with '
+                            , modelsToCompare[1], ' vs ', modelsToCompare[2], sep = '')) +
+    theme(plot.caption = element_text(size = 14, face = "bold"))
+```
+
+#### 3. Multiclass ROC Plots of C5.0 and Parallel Random Forest
+
+```{r model_comparison_roc_plot, echo = FALSE, warning = FALSE, fig.width = 10, fig.height = 4} 
+# A compiled function to plot a multiclass ROC using one-vs-all approach  
+f_pmr <- function(y, train, validation, method, control, tuneGrid = NULL
+                  , showLegend = FALSE, caption = NULL, ...) {
+    pred_per_classe <- list()
+    dat <- data.table()
+    lvls <- eval(parse(text = paste('levels(train$', y, ')', sep = ''))) 
+    nlvls <- eval(parse(text = paste('nlevels(train$', y, ')', sep = ''))) 
+    for (type.id in 1:nlvls) {
+        train.temp <- train
+        valid.temp <- validation
+        eval(parse(text = paste('train.temp$', y, ' <- as.factor(train$'
+                                , y, ' == lvls[type.id])', sep = ''))) 
+        eval(parse(text = paste('valid.temp$', y, ' <- as.factor(validation$'
+                                , y, ' == lvls[type.id])', sep = '')))
+        set.seed(seed) 
+        formula <- as.formula(eval(parse(text = paste(y, ' ~ .', sep = ''))))                 
+        model.temp <- caret::train(formula, data = train.temp, method = method
+                                   , trControl = control,  tuneGrid = tuneGrid) 
+        predict.temp <- predict(model.temp, valid.temp, type = "prob")
+        score <- predict.temp[, "TRUE"] 
+        actual.class <- eval(parse(text = paste('valid.temp$', y, sep = ''))) 
+        pred <- prediction(score, actual.class)
+        perf <- performance(pred, "tpr", "fpr")
+        tmp <- data.table(tpr = unlist(perf@y.values), fpr = unlist(perf@x.values))
+        tmp$classe <- lvls[type.id]
+        dat <- rbind(dat,tmp)
+    }
+    g <- eval(parse(text = paste('ggplot(dat, aes(x = fpr, y = tpr
+                                 , shape = classe, colour = classe))', sep = '')))
+    g <- g + geom_line(size = 0.5) 
+    g <- g + geom_abline(slope = 1, linetype = 'dotted') 
+    g <- g + labs(x = 'False Positive Rate', y = 'True Positive Rate', caption = caption)
+    g <- g + gTheme
+    if (!showLegend) g <- g + theme(legend.position = "none")  ## Don't show legend
+    return (g)            
+}
+multiclassROCPlot <- cmpfun(f_pmr) 
+
+# Prepare the ROC plots
+for (method in modelsToCompare) {
+    # Build the multiclass ROC plots
+    mod <- eval(parse(text = paste('lModels$', method, sep = '')))
+    idx <- match(method, modelsToCompare)
+    plot <- multiclassROCPlot("classe", training, validation, method
+                              , trainControl(method = "none")
+                              , expand.grid(mod$bestTune)
+                              , showLegend = (idx == 2)
+                              , caption = paste('(', chartr("12", "ab", idx), ') '
+                                                , method, sep = ''))
+    eval(parse(text = paste('rocPlot', idx, ' <- plot', sep = '')))
+}
+# Plot for comparison of ROC curves
+grid.arrange(rocPlot1, rocPlot2, ncol = 2, widths = c(1, 1.2))
+```
+
+#### 4. Summary of the Training Dataset `pml-training.csv`
+
+``` {r training_dataset_summary, echo = FALSE, warning = FALSE}
+rawTrainingSummary
+```
+
+#### 5. Session Info
+
+Below is the session info when generating this report.
+
+```{r session_info_and_clean_up, echo = FALSE, warning = FALSE, collapse = TRUE}
+# Print the session info
+sessionInfo()
+# Print the time in generating this report
+#message("")
+#message(rep("-", 80)) # Print division
+#message(paste('This report was generated in ', as.hms(Sys.time() - start), '.', sep = ''))
+# For memory cleanup
+rm(list = ls())
+gc <- gc()
+```
