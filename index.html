@@ -225,7 +225,7 @@ rawTesting &lt;-<span class="st"> </span><span class="kw">imputeMeanBy</span>(ra
 <pre><code>## 
 ##         A         B         C         D         E 
 ## 0.2843747 0.1935073 0.1743961 0.1638977 0.1838243</code></pre>
-<p>Furthermore, highly correlated attributes will be removed so that training a model would perform better. We’ll use <code>caret</code>’s <code>findCorrelation</code> function to find the attributes that are highly correlated features. In practice, the attributes with an absolute correlation of 0.75 or higher can be removed but we’ll retain more as they could be important in our model, hence we’ll set the cutoff at 95%.</p>
+<p>Furthermore, highly correlated attributes will be removed so that training a model would perform better. We’ll use <code>caret</code>’s <code>findCorrelation</code> function to find the attributes that are highly correlated features. In practice, the attributes with an absolute correlation of 0.75 or higher can be removed but we’ll retain more as they could be important in our model, hence we’ll set the cutoff at 95% (<em>refer to Appendix 5 for the features retained</em>).</p>
 <div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r"><span class="co"># Predictors to remove</span>
 <span class="co">#names(rawTraining[, c(1:6)])</span>
 rawTraining &lt;-<span class="st"> </span>rawTraining[, -<span class="kw">c</span>(<span class="dv">1</span>:<span class="dv">6</span>)]
@@ -244,7 +244,7 @@ rawTraining &lt;-<span class="st"> </span>rawTraining[, .SD, .SDcols =<span clas
 testing &lt;-<span class="st"> </span><span class="kw">subset</span>(rawTesting, <span class="dt">select =</span> (<span class="kw">names</span>(rawTesting) %in%<span class="st"> </span><span class="kw">names</span>(rawTraining))) 
 <span class="co">#names(rawTraining)</span>
 <span class="co">#names(testing)</span></code></pre></div>
-<p>In order to get out-of-sample errors, the cleaned training set is split with typical 60% / 40% into a new training set for prediction and a validation set to compute the out-of-sample errors, respectively.</p>
+<p>The cleaned training set is split with typical 60% / 40% into a new training set for prediction and a validation set respectively to compute the out-of-sample errors through cross-validation. The expected value of the <em>out-of-sample error</em> will correspond to the expected number of missclassified observations over total number of observations in the “test” (<em>here, it’s the validation</em>) dataset, which is the computed <code>(1 - accuracy)</code> found from cross-validation.</p>
 <div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r"><span class="co"># Split data with randoom rows and preserved the overall class distribution of the data.</span>
 seed &lt;-<span class="st"> </span><span class="dv">39703</span>
 <span class="kw">set.seed</span>(seed)  <span class="co"># For reproducibility</span>
@@ -255,7 +255,7 @@ validation &lt;-<span class="st"> </span>rawTraining[-idx, ]</code></pre></div>
 </div>
 <div id="training-different-models" class="section level2">
 <h2>Training Different Models</h2>
-<p>Various classication algorithms will be used to train different models on the training data with <em>10-fold cross validation</em> and without explicitly specifying the tuning parameters, i.e. we let the learner automatically search for the best parameters. The classification algorithms are some of available learning methods from <code>caret</code> such as <em>Stochastic Gradient Boosting</em> (<code>gbm</code>), <em>Parallel Random Forest</em> (<code>parRF</code>), <em>Support Vector Machines with Polynomial Kernel</em> (<code>svmPoly</code>), and the <em>C5.0</em>. These samples of machine learning algorithms are based on comparison papers by Delgado et al and by Wainer (<em>see the references at the bottom of this page</em>).</p>
+<p>Various classication algorithms will be used to train different models on the training data with <em>10-fold cross-validation</em> and without explicitly specifying the tuning parameters, i.e. we let the learner automatically search for the best parameters. The classification algorithms are some of available learning methods from <code>caret</code> such as <em>Stochastic Gradient Boosting</em> (<code>gbm</code>), <em>Parallel Random Forest</em> (<code>parRF</code>), <em>Support Vector Machines with Polynomial Kernel</em> (<code>svmPoly</code>), and the <em>C5.0</em>. These samples of machine learning algorithms are based on comparison papers by Delgado et al and by Wainer (<em>see the references at the bottom of this page</em>).</p>
 <p>Training different models through <code>caret</code> has proven to be more convenient because it provides a simple, common interface to almost every machine learning algorithm in <code>R</code>. However, it’s a bit slower than the counterpart non-<code>caret</code> packages, hence parallel processing is utilized to speed up the training time.</p>
 <pre><code>## --------------------------------------------------------------------------------
 ## Stochastic Gradient Boosting 
@@ -330,9 +330,9 @@ validation &lt;-<span class="st"> </span>rawTraining[-idx, ]</code></pre></div>
 ## Resampling results across tuning parameters:
 ## 
 ##   mtry  Accuracy  Kappa 
-##    2    0.9603    0.9497
-##   46    0.9896    0.9869
-##   90    0.9784    0.9727
+##    2    0.9604    0.9499
+##   46    0.9899    0.9872
+##   90    0.9790    0.9735
 ## 
 ## Accuracy was used to select the optimal model using  the largest value.
 ## The final value used for the model was mtry = 46. 
@@ -340,33 +340,33 @@ validation &lt;-<span class="st"> </span>rawTraining[-idx, ]</code></pre></div>
 ## 
 ##           Reference
 ## Prediction    A    B    C    D    E
-##          A 2228    3    0    0    1
-##          B   14 1497    6    0    1
-##          C    0    6 1355    7    0
+##          A 2227    4    0    0    1
+##          B   14 1496    7    0    1
+##          C    0    4 1357    7    0
 ##          D    0    0   22 1264    0
-##          E    0    2    2    5 1433
+##          E    0    2    1    5 1434
 ## 
 ## Overall Statistics
-##                                           
-##                Accuracy : 0.9912          
-##                  95% CI : (0.9889, 0.9932)
-##     No Information Rate : 0.2858          
-##     P-Value [Acc &gt; NIR] : &lt; 2.2e-16       
-##                                           
-##                   Kappa : 0.9889          
-##  Mcnemar&#39;s Test P-Value : NA              
+##                                          
+##                Accuracy : 0.9913         
+##                  95% CI : (0.989, 0.9933)
+##     No Information Rate : 0.2856         
+##     P-Value [Acc &gt; NIR] : &lt; 2.2e-16      
+##                                          
+##                   Kappa : 0.989          
+##  Mcnemar&#39;s Test P-Value : NA             
 ## 
 ## Statistics by Class:
 ## 
 ##                      Class: A Class: B Class: C Class: D Class: E
-## Sensitivity            0.9938   0.9927   0.9783   0.9906   0.9986
-## Specificity            0.9993   0.9967   0.9980   0.9967   0.9986
-## Pos Pred Value         0.9982   0.9862   0.9905   0.9829   0.9938
-## Neg Pred Value         0.9975   0.9983   0.9954   0.9982   0.9997
-## Prevalence             0.2858   0.1922   0.1765   0.1626   0.1829
-## Detection Rate         0.2840   0.1908   0.1727   0.1611   0.1826
+## Sensitivity            0.9938   0.9934   0.9784   0.9906   0.9986
+## Specificity            0.9991   0.9965   0.9983   0.9967   0.9988
+## Pos Pred Value         0.9978   0.9855   0.9920   0.9829   0.9945
+## Neg Pred Value         0.9975   0.9984   0.9954   0.9982   0.9997
+## Prevalence             0.2856   0.1919   0.1768   0.1626   0.1830
+## Detection Rate         0.2838   0.1907   0.1730   0.1611   0.1828
 ## Detection Prevalence   0.2845   0.1935   0.1744   0.1639   0.1838
-## Balanced Accuracy      0.9965   0.9947   0.9882   0.9936   0.9986
+## Balanced Accuracy      0.9964   0.9949   0.9883   0.9936   0.9987
 ## --------------------------------------------------------------------------------
 ## Support Vector Machines with Polynomial Kernel 
 ## 
@@ -506,13 +506,13 @@ validation &lt;-<span class="st"> </span>rawTraining[-idx, ]</code></pre></div>
 </div>
 <div id="model-comparison" class="section level2">
 <h2>Model Comparison</h2>
-<p>Below is the model comparison table highlighting different models, with their corresponding <em>accuracy</em> and <em>kappa</em> values from prediction over the validation data, the multi-class <em>area under the curve (AUC)</em> computed by <code>multiclass.roc</code> function of <code>pROC</code> package, and the <em>time to train the classifier</em> with 10-fold cross-validation.</p>
-<pre><code>##    Method Accuracy    Kappa Multi-class AUC    Time Elapsed
-## 1    C5.0 0.993627 0.991939        0.997534 00:09:03.198532
-## 2   parRF 0.991206 0.988875        0.996901 00:12:17.797273
-## 3 svmPoly 0.984578 0.980490        0.991981  01:29:41.83729
-## 4     gbm 0.958705 0.947765        0.982376 00:07:34.643433</code></pre>
-<p>Based on the table above, the model by <em>C5.0</em> gets the highest accuracy, kappa and the average AUC over the validation dataset. The model trained by <em>parallel Random Forest</em> has similar outcome as <em>C5.0</em>’s.</p>
+<p>Below is the model comparison table highlighting different models, with their corresponding <em>accuracy</em>, <em>expected out-of-sample (OOS) errors</em> and <em>kappa</em> values from prediction over the validation data, the multi-class <em>area under the curve (AUC)</em> computed by <code>multiclass.roc</code> function of <code>pROC</code> package, and the <em>time to train the classifier</em>. The table is sorted by <em>expected out-of-sample errors</em> from the lowest to highest.</p>
+<pre><code>##    Method Accuracy OOS Error    Kappa Multi-class AUC    Time Elapsed
+## 1    C5.0 0.993627  0.006373 0.991939        0.997534 00:08:38.418598
+## 2   parRF 0.991333  0.008667 0.989036        0.997020 00:10:52.290795
+## 3 svmPoly 0.984578  0.015422 0.980490        0.991981 01:25:57.926228
+## 4     gbm 0.958705  0.041295 0.947765        0.982376 00:07:55.686496</code></pre>
+<p>Based on the table above, the model by <em>C5.0</em> gets the least <em>expected out-of-sample errors</em>, yet has the highest <em>accuracy</em>, <em>kappa</em> and the <em>average AUC</em> values from the cross-validation. The model trained by <em>parallel Random Forest</em> has similar outcome as <em>C5.0</em>’s.</p>
 <p>Next, we’ll further explore and compare differences between models by their resampling distributions. <em>(This technique is based on Section 5.8.2. Between-Models of the <code>caret</code> documentation.)</em></p>
 <div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r"><span class="co"># Resampling distributions of models.</span>
 <span class="kw">set.seed</span>(seed) 
@@ -531,15 +531,15 @@ diffAcc &lt;-<span class="st"> </span><span class="kw">as.data.frame</span>(difV
                             <span class="kw">grep</span>(resampModelNameWithMaxAcc, <span class="kw">colnames</span>(difValues$difs$Accuracy))])
 modelsToCompare &lt;-<span class="st"> </span><span class="kw">unlist</span>(<span class="kw">strsplit</span>(<span class="kw">names</span>(diffAcc)
                             [<span class="kw">which.min</span>(<span class="kw">abs</span>(<span class="kw">unlist</span>(<span class="kw">lapply</span>(diffAcc, mean))))], <span class="st">&quot;.diff.&quot;</span>))</code></pre></div>
-<p>As shown in <em>Appendix 1</em>, models are ranked from highest to lowest accuracy at the right plot. At the left, the differences in accuracy within the confidence level of 0.9916667 are plotted for each of model pairs. The accuracy of models based on <code>C5.0</code> and <code>parRF</code> are pretty close and almost has no difference. In <em>Appendix 2</em>, we can see below that the model built by <code>C5.0</code> beats the <code>parRF</code>’s when correctly predicting most of the <em>classe</em> values from the validation dataset. Moreover, the ROC plots in <em>Appendix 3</em>, which are implemented with <em>one-vs-all</em> approach, show that models trained by <code>C5.0</code> and <code>parRF</code> are both optimal.</p>
+<p>As shown in <em>Appendix 1</em>, models are ranked from highest to lowest accuracy at the right plot. At the left, the differences in accuracy within the confidence level of 0.992 are plotted for each of model pairs. The accuracy of models based on <code>C5.0</code> and <code>parRF</code> are pretty close and almost has no difference. In <em>Appendix 2</em>, we can see that the model built by <code>C5.0</code> beats the <code>parRF</code>’s when correctly predicting most of the <em>classe</em> values from the validation dataset. Moreover, the ROC plots in <em>Appendix 3</em>, which are implemented with <em>one-vs-all</em> approach, show that models trained by <code>C5.0</code> and <code>parRF</code> are both optimal.</p>
 <p>We’ll choose the model with the highest accuracy from the comparison table, i.e. C5.0 to predict the test cases and save it as file.</p>
-<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r">    <span class="co"># Save the model as .RDS file</span>
-    trainedModelNameWithMaxAcc &lt;-<span class="st"> </span>dtModels[<span class="dv">1</span>, <span class="dv">1</span>]
-    mod &lt;-<span class="st"> </span><span class="kw">eval</span>(<span class="kw">parse</span>(<span class="dt">text =</span> <span class="kw">paste</span>(<span class="st">&#39;lModels$&#39;</span>, trainedModelNameWithMaxAcc, <span class="dt">sep =</span> <span class="st">&#39;&#39;</span>)))
-    modelFileName &lt;-<span class="st"> </span><span class="kw">paste</span>(<span class="st">&#39;model-&#39;</span>, trainedModelNameWithMaxAcc, <span class="st">&#39;.rds&#39;</span>, <span class="dt">sep =</span> <span class="st">&#39;&#39;</span>)
-    <span class="kw">saveRDS</span>(mod, modelFileName) <span class="co"># Save the model as file</span>
-    <span class="kw">message</span>(<span class="kw">paste</span>(<span class="st">&#39;The trained model for &#39;</span>, trainedModelNameWithMaxAcc, 
-                  <span class="st">&#39; has been saved as &#39;</span>, modelFileName, <span class="st">&#39;.&#39;</span>, <span class="dt">sep =</span> <span class="st">&#39;&#39;</span>))</code></pre></div>
+<div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r"><span class="co"># Save the model as .RDS file</span>
+trainedModelNameWithMaxAcc &lt;-<span class="st"> </span>dtModels[<span class="dv">1</span>, <span class="dv">1</span>]
+mod &lt;-<span class="st"> </span><span class="kw">eval</span>(<span class="kw">parse</span>(<span class="dt">text =</span> <span class="kw">paste</span>(<span class="st">&#39;lModels$&#39;</span>, trainedModelNameWithMaxAcc, <span class="dt">sep =</span> <span class="st">&#39;&#39;</span>)))
+modelFileName &lt;-<span class="st"> </span><span class="kw">paste</span>(<span class="st">&#39;model-&#39;</span>, trainedModelNameWithMaxAcc, <span class="st">&#39;.rds&#39;</span>, <span class="dt">sep =</span> <span class="st">&#39;&#39;</span>)
+<span class="kw">saveRDS</span>(mod, modelFileName) <span class="co"># Save the model as file</span>
+<span class="kw">message</span>(<span class="kw">paste</span>(<span class="st">&#39;The trained model for &#39;</span>, trainedModelNameWithMaxAcc, 
+              <span class="st">&#39; has been saved as &#39;</span>, modelFileName, <span class="st">&#39;.&#39;</span>, <span class="dt">sep =</span> <span class="st">&#39;&#39;</span>))</code></pre></div>
 <pre><code>## The trained model for C5.0 has been saved as model-C5.0.rds.</code></pre>
 </div>
 <div id="prediction-on-testing-set" class="section level2">
@@ -571,8 +571,8 @@ modelsToCompare &lt;-<span class="st"> </span><span class="kw">unlist</span>(<sp
 <h4>1. Dot Plots of Model Resamples and Differences</h4>
 <p><img src="DS-PML_files/figure-html/model_comparison_resample_plot-1.png" width="960" /></p>
 </div>
-<div id="stacked-bar-chart-of-prediction-correctness-over-validation-dataset-between-c5.0-and-parallel-random-forest" class="section level4">
-<h4>2. Stacked Bar Chart of Prediction Correctness over Validation Dataset Between C5.0 and Parallel Random Forest</h4>
+<div id="bar-chart-of-prediction-correctness-from-cross-validation-between-c5.0-and-parallel-random-forest" class="section level4">
+<h4>2. Bar Chart of Prediction Correctness from Cross-Validation Between C5.0 and Parallel Random Forest</h4>
 <p><img src="DS-PML_files/figure-html/model_comparison_correctness_plot-1.png" width="960" /></p>
 </div>
 <div id="multiclass-roc-plots-of-c5.0-and-parallel-random-forest" class="section level4">
@@ -958,8 +958,57 @@ modelsToCompare &lt;-<span class="st"> </span><span class="kw">unlist</span>(<sp
 ##                    
 ## </code></pre>
 </div>
+<div id="features-retained-after-features-selection" class="section level4">
+<h4>5. Features Retained After Features Selection</h4>
+<pre><code>##  [1] &quot;pitch_belt&quot;              &quot;yaw_belt&quot;               
+##  [3] &quot;total_accel_belt&quot;        &quot;kurtosis_picth_belt&quot;    
+##  [5] &quot;skewness_roll_belt&quot;      &quot;skewness_roll_belt.1&quot;   
+##  [7] &quot;min_yaw_belt&quot;            &quot;amplitude_pitch_belt&quot;   
+##  [9] &quot;var_total_accel_belt&quot;    &quot;stddev_roll_belt&quot;       
+## [11] &quot;var_roll_belt&quot;           &quot;stddev_pitch_belt&quot;      
+## [13] &quot;var_pitch_belt&quot;          &quot;var_yaw_belt&quot;           
+## [15] &quot;gyros_belt_x&quot;            &quot;gyros_belt_y&quot;           
+## [17] &quot;gyros_belt_z&quot;            &quot;accel_belt_y&quot;           
+## [19] &quot;magnet_belt_x&quot;           &quot;magnet_belt_y&quot;          
+## [21] &quot;magnet_belt_z&quot;           &quot;roll_arm&quot;               
+## [23] &quot;pitch_arm&quot;               &quot;yaw_arm&quot;                
+## [25] &quot;total_accel_arm&quot;         &quot;var_accel_arm&quot;          
+## [27] &quot;gyros_arm_x&quot;             &quot;gyros_arm_y&quot;            
+## [29] &quot;gyros_arm_z&quot;             &quot;accel_arm_x&quot;            
+## [31] &quot;accel_arm_y&quot;             &quot;accel_arm_z&quot;            
+## [33] &quot;magnet_arm_x&quot;            &quot;magnet_arm_y&quot;           
+## [35] &quot;magnet_arm_z&quot;            &quot;kurtosis_roll_arm&quot;      
+## [37] &quot;kurtosis_picth_arm&quot;      &quot;kurtosis_yaw_arm&quot;       
+## [39] &quot;skewness_roll_arm&quot;       &quot;skewness_pitch_arm&quot;     
+## [41] &quot;skewness_yaw_arm&quot;        &quot;max_picth_arm&quot;          
+## [43] &quot;max_yaw_arm&quot;             &quot;min_yaw_arm&quot;            
+## [45] &quot;amplitude_yaw_arm&quot;       &quot;roll_dumbbell&quot;          
+## [47] &quot;pitch_dumbbell&quot;          &quot;yaw_dumbbell&quot;           
+## [49] &quot;kurtosis_roll_dumbbell&quot;  &quot;kurtosis_picth_dumbbell&quot;
+## [51] &quot;skewness_roll_dumbbell&quot;  &quot;skewness_pitch_dumbbell&quot;
+## [53] &quot;min_roll_dumbbell&quot;       &quot;min_pitch_dumbbell&quot;     
+## [55] &quot;total_accel_dumbbell&quot;    &quot;var_accel_dumbbell&quot;     
+## [57] &quot;avg_roll_dumbbell&quot;       &quot;var_roll_dumbbell&quot;      
+## [59] &quot;avg_pitch_dumbbell&quot;      &quot;var_pitch_dumbbell&quot;     
+## [61] &quot;var_yaw_dumbbell&quot;        &quot;gyros_dumbbell_y&quot;       
+## [63] &quot;gyros_dumbbell_z&quot;        &quot;accel_dumbbell_x&quot;       
+## [65] &quot;accel_dumbbell_y&quot;        &quot;accel_dumbbell_z&quot;       
+## [67] &quot;magnet_dumbbell_x&quot;       &quot;magnet_dumbbell_y&quot;      
+## [69] &quot;magnet_dumbbell_z&quot;       &quot;roll_forearm&quot;           
+## [71] &quot;pitch_forearm&quot;           &quot;yaw_forearm&quot;            
+## [73] &quot;kurtosis_picth_forearm&quot;  &quot;skewness_roll_forearm&quot;  
+## [75] &quot;skewness_pitch_forearm&quot;  &quot;max_picth_forearm&quot;      
+## [77] &quot;min_pitch_forearm&quot;       &quot;min_yaw_forearm&quot;        
+## [79] &quot;amplitude_pitch_forearm&quot; &quot;total_accel_forearm&quot;    
+## [81] &quot;var_accel_forearm&quot;       &quot;gyros_forearm_x&quot;        
+## [83] &quot;gyros_forearm_y&quot;         &quot;gyros_forearm_z&quot;        
+## [85] &quot;accel_forearm_x&quot;         &quot;accel_forearm_y&quot;        
+## [87] &quot;accel_forearm_z&quot;         &quot;magnet_forearm_x&quot;       
+## [89] &quot;magnet_forearm_y&quot;        &quot;magnet_forearm_z&quot;       
+## [91] &quot;classe&quot;</code></pre>
+</div>
 <div id="session-info" class="section level4">
-<h4>5. Session Info</h4>
+<h4>6. Session Info</h4>
 <p>Below is the session info when generating this report.</p>
 <pre><code>## R version 3.2.3 (2015-12-10)
 ## Platform: x86_64-apple-darwin13.4.0 (64-bit)

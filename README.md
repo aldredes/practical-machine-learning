@@ -23,5 +23,5 @@ The data for this project come from this source: http://groupware.les.inf.puc-ri
 
 ## Overview of the Report and Prediction Outcome
 
-The written report can seen via https://aldredes.github.io/practical-machine-learning/.  It has approximately 1,340 words excluding the R codes and their outputs.  The model built by a machine learning algorithm was applied to the 20 test cases available in the test data above and all outcomes are correct per the Course Project Prediction Quiz. 
+The written report can seen via https://aldredes.github.io/practical-machine-learning/.  It has approximately 1,400 words excluding the R codes and their outputs.  The model built by a machine learning algorithm was applied to the 20 test cases available in the test data above and all outcomes are correct per the Course Project Prediction Quiz. 
 
