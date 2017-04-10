@@ -143,7 +143,7 @@ Below is the _marginal table_ of observations among the target variable `classe`
 prop.table(table(rawTraining$classe))
 ```
 
-Furthermore, highly correlated attributes will be removed so that training a model would perform better. We'll use `caret`'s `findCorrelation` function to find the attributes that are highly correlated features. In practice, the attributes with an absolute correlation of 0.75 or higher can be removed but we'll retain more as they could be important in our model, hence we'll set the cutoff at 95%.
+Furthermore, highly correlated attributes will be removed so that training a model would perform better. We'll use `caret`'s `findCorrelation` function to find the attributes that are highly correlated features. In practice, the attributes with an absolute correlation of 0.75 or higher can be removed but we'll retain more as they could be important in our model, hence we'll set the cutoff at 95% (_refer to Appendix 5 for the features retained_).
 
 ```{r data_cleaning_feature_selection, echo = TRUE, warning = FALSE}
 # Predictors to remove
@@ -166,7 +166,7 @@ testing <- subset(rawTesting, select = (names(rawTesting) %in% names(rawTraining
 #names(testing)
 ```
 
-In order to get out-of-sample errors, the cleaned training set is split with typical `r splitPct <- 0.6; splitPct * 100`% / `r (1 - splitPct) * 100`% into a new training set for prediction and a validation set to compute the out-of-sample errors, respectively.
+The cleaned training set is split with typical `r splitPct <- 0.6; splitPct * 100`% / `r (1 - splitPct) * 100`% into a new training set for prediction and a validation set respectively to compute the out-of-sample errors through cross-validation.  The expected value of the _out-of-sample error_ will correspond to the expected number of missclassified observations over total number of observations in the "test" (_here, it's the validation_) dataset, which is the computed `(1 - accuracy)` found from cross-validation.
 
 ```{r data_spliting, echo = TRUE, warning = FALSE}
 # Split data with randoom rows and preserved the overall class distribution of the data.
@@ -182,12 +182,12 @@ The new training dataset has `r formatNum(nrow(training), 0)` observations and t
 
 ## Training Different Models
 
-Various classication algorithms will be used to train different models on the training data with _10-fold cross validation_ and without explicitly specifying the tuning parameters, i.e. we let the learner automatically search for the best parameters. The classification algorithms are some of available learning methods from `caret` such as _Stochastic Gradient Boosting_ (`gbm`), _Parallel Random Forest_ (`parRF`), _Support Vector Machines with Polynomial Kernel_ (`svmPoly`), and the _C5.0_.  These samples of machine learning algorithms are based on comparison papers by Delgado et al and by Wainer (_see the references at the bottom of this page_).
+Various classication algorithms will be used to train different models on the training data with _10-fold cross-validation_ and without explicitly specifying the tuning parameters, i.e. we let the learner automatically search for the best parameters. The classification algorithms are some of available learning methods from `caret` such as _Stochastic Gradient Boosting_ (`gbm`), _Parallel Random Forest_ (`parRF`), _Support Vector Machines with Polynomial Kernel_ (`svmPoly`), and the _C5.0_.  These samples of machine learning algorithms are based on comparison papers by Delgado et al and by Wainer (_see the references at the bottom of this page_).
 
 Training different models through `caret` has proven to be more convenient because it provides a simple, common interface to almost every machine learning algorithm in `R`. However, it's a bit slower than the counterpart non-`caret` packages, hence parallel processing is utilized to speed up the training time.
 
 ```{r model_training, echo = FALSE, warning = FALSE, collapse = TRUE}
-# Training control for k-fold cross validation
+# Training control for k-fold cross-validation
 control <- trainControl(method = "cv") # leave with default k = 10
 
 # A compiled function to train a model by a variable with a given algorithm
@@ -234,6 +234,7 @@ for (method in lMethods) {
     # Populate the model table
     dtModels <- rbindlist(list(dtModels,
                                      as.list(c(method, formatNum(as.numeric(accuracy)), 
+                                               formatNum(as.numeric(1 - accuracy)), 
                                                formatNum(as.numeric(kappa)),
                                                formatNum(as.numeric(auc)), 
                                                as.character(as.hms(e - s))))),
@@ -245,20 +246,20 @@ for (method in lMethods) {
                           , list(', method, ' =  pred))', sep = ''))) 
     message(rep("-", 80)) # Print division
 }
-colnames(dtModels) <- c("Method", "Accuracy", "Kappa", "Multi-class AUC", "Time Elapsed")
+colnames(dtModels) <- c("Method", "Accuracy", "OOS Error", "Kappa", "Multi-class AUC", "Time Elapsed")
 dtModels <- as.data.frame(dtModels[order(-Accuracy)])
 ```
 
 
 ## Model Comparison
 
-Below is the model comparison table highlighting different models, with their corresponding _accuracy_ and _kappa_ values from prediction over the validation data, the multi-class _area under the curve (AUC)_ computed by `multiclass.roc` function of `pROC` package, and the _time to train the classifier_ with 10-fold cross-validation. 
+Below is the model comparison table highlighting different models, with their corresponding _accuracy_, _expected out-of-sample (OOS) errors_ and _kappa_ values from prediction over the validation data, the multi-class _area under the curve (AUC)_ computed by `multiclass.roc` function of `pROC` package, and the _time to train the classifier_. The table is sorted by _expected out-of-sample errors_ from the lowest to highest. 
 
 ```{r model_comparison_table, echo = FALSE, warning = FALSE}
 print(dtModels)
 ```
 
-Based on the table above, the model by _C5.0_ gets the highest accuracy, kappa and the average AUC over the validation dataset. The model trained by _parallel Random Forest_ has similar outcome as _C5.0_'s.  
+Based on the table above, the model by _C5.0_ gets the least _expected out-of-sample errors_, yet has the highest _accuracy_, _kappa_ and the _average AUC_ values from the cross-validation.  The model trained by _parallel Random Forest_ has similar outcome as _C5.0_'s.  
 
 Next, we'll further explore and compare differences between models by their resampling distributions.  _(This technique is based on Section 5.8.2. Between-Models of the `caret` documentation.)_
 
@@ -282,18 +283,18 @@ modelsToCompare <- unlist(strsplit(names(diffAcc)
                             [which.min(abs(unlist(lapply(diffAcc, mean))))], ".diff."))
 ```
 
-As shown in _Appendix 1_, models are ranked from highest to lowest accuracy at the right plot.  At the left, the differences in accuracy within the confidence level of `r difValues$confLevel` are plotted for each of model pairs.  The accuracy of models based on `C5.0` and `parRF` are pretty close and almost has no difference. In _Appendix 2_, we can see below that the model built by `C5.0` beats the `parRF`'s when correctly predicting most of the _classe_ values from the validation dataset.  Moreover, the ROC plots in _Appendix 3_, which are implemented with _one-vs-all_ approach, show that models trained by `C5.0` and `parRF` are both optimal. 
+As shown in _Appendix 1_, models are ranked from highest to lowest accuracy at the right plot.  At the left, the differences in accuracy within the confidence level of `r formatNum(difValues$confLevel, 3)` are plotted for each of model pairs.  The accuracy of models based on `C5.0` and `parRF` are pretty close and almost has no difference. In _Appendix 2_, we can see that the model built by `C5.0` beats the `parRF`'s when correctly predicting most of the _classe_ values from the validation dataset.  Moreover, the ROC plots in _Appendix 3_, which are implemented with _one-vs-all_ approach, show that models trained by `C5.0` and `parRF` are both optimal. 
 
 We'll choose the model with the highest accuracy from the comparison table, i.e. `r dtModels[1, 1]` to predict the test cases and save it as file.
 
 ```{r save_model_as_file, echo = TRUE, warning = FALSE}
-    # Save the model as .RDS file
-    trainedModelNameWithMaxAcc <- dtModels[1, 1]
-    mod <- eval(parse(text = paste('lModels$', trainedModelNameWithMaxAcc, sep = '')))
-    modelFileName <- paste('model-', trainedModelNameWithMaxAcc, '.rds', sep = '')
-    saveRDS(mod, modelFileName) # Save the model as file
-    message(paste('The trained model for ', trainedModelNameWithMaxAcc, 
-                  ' has been saved as ', modelFileName, '.', sep = ''))
+# Save the model as .RDS file
+trainedModelNameWithMaxAcc <- dtModels[1, 1]
+mod <- eval(parse(text = paste('lModels$', trainedModelNameWithMaxAcc, sep = '')))
+modelFileName <- paste('model-', trainedModelNameWithMaxAcc, '.rds', sep = '')
+saveRDS(mod, modelFileName) # Save the model as file
+message(paste('The trained model for ', trainedModelNameWithMaxAcc, 
+              ' has been saved as ', modelFileName, '.', sep = ''))
 ```
 
 ## Prediction on Testing Set
@@ -331,7 +332,7 @@ difPlot <- dotplot(difValues)
 grid.arrange(resPlot, difPlot, ncol = 2, widths = c(1, 1.2))
 ```
 
-#### 2. Stacked Bar Chart of Prediction Correctness over Validation Dataset Between C5.0 and Parallel Random Forest
+#### 2. Bar Chart of Prediction Correctness from Cross-Validation Between C5.0 and Parallel Random Forest
 
 ```{r model_comparison_correctness_plot, echo = FALSE, warning = FALSE, fig.width = 10, fig.height = 4} 
 # Initialize plot theme
@@ -363,14 +364,14 @@ ggplot(dtPredCorrect, aes(x = model, y = N, fill = correct)) +
     geom_bar(position = "fill", stat = "identity") + 
     scale_y_continuous(labels = percent_format()) +
     coord_trans(y = scales::exp_trans(20)) +
-    scale_fill_manual(values = c("#771C19", "#E2C59F")) +
+    scale_fill_manual(values = c("#771C19", "#8E9CA3")) +
     facet_wrap(~classe, nrow = 1) + 
     gTheme + 
     theme(axis.text.x = element_text(angle = 40, hjust = 1)) +
     labs(x = '', y = ''
             , caption = paste('Model Prediction Correctness per classe with '
                             , modelsToCompare[1], ' vs ', modelsToCompare[2], sep = '')) +
-    theme(plot.caption = element_text(size = 14, face = "bold"))
+    theme(plot.caption = element_text(size = 13, face = "bold"))
 ```
 
 #### 3. Multiclass ROC Plots of C5.0 and Parallel Random Forest
@@ -437,7 +438,13 @@ grid.arrange(rocPlot1, rocPlot2, ncol = 2, widths = c(1, 1.2))
 rawTrainingSummary
 ```
 
-#### 5. Session Info
+#### 5. Features Retained After Features Selection
+
+``` {r training_features, echo = FALSE, warning = FALSE}
+names(training)
+```
+
+#### 6. Session Info
 
 Below is the session info when generating this report.
 
